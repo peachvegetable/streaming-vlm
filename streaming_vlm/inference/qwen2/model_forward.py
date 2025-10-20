@@ -1,4 +1,11 @@
-from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLCausalLMOutputWithPast,Qwen2VLModelOutputWithPast,is_torchdynamo_compiling
+# from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLCausalLMOutputWithPast,Qwen2VLModelOutputWithPast,is_torchdynamo_compiling
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.utils import is_torchdynamo_compiling
+
+# Keep the old names the code expects:
+Qwen2VLModelOutputWithPast = BaseModelOutputWithPast
+Qwen2VLCausalLMOutputWithPast = CausalLMOutputWithPast
+
 from typing import Optional, List, Tuple, Union
 import torch
 from streaming_vlm.inference.streaming_args import StreamingArgs

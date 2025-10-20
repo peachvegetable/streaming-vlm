@@ -4,7 +4,21 @@ import torch
 from typing import Optional, Tuple, List, Union
 from torch.nn import functional as F
 from types import MethodType
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import logger,rotate_half,Cache,BaseModelOutputWithPast,repeat_kv,_flash_attention_forward, StaticCache, SlidingWindowCache, AttentionMaskConverter, make_flex_block_causal_mask, BlockMask
+# from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import logger,rotate_half,Cache,BaseModelOutputWithPast,repeat_kv,_flash_attention_forward, StaticCache, SlidingWindowCache, AttentionMaskConverter, make_flex_block_causal_mask, BlockMask
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    logger,
+    rotate_half,
+    Cache,
+    BaseModelOutputWithPast,
+    repeat_kv,
+    _flash_attention_forward,
+    StaticCache,
+    SlidingWindowCache,
+    AttentionMaskConverter,
+)
+from torch.nn.attention.flex_attention import BlockMask
+from transformers.integrations.flex_attention import make_flex_block_causal_mask
+
 from streaming_vlm.inference.generate.streaming_cache import StreamingCache
 from streaming_vlm.inference.streaming_args import StreamingArgs
 import math

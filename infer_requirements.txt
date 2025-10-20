@@ -9,7 +9,6 @@ attrs==25.3.0
 av==14.4.0
 banal==1.0.6
 beautifulsoup4==4.13.4
-block_sparse_attn==0.0.1
 bs4==0.0.2
 certifi
 charset-normalizer==3.4.2
@@ -28,7 +27,6 @@ fastapi==0.116.1
 faster-whisper==1.1.1
 ffmpeg-python==0.2.0
 filelock==3.18.0
-flash_attn==2.8.0.post2
 flatbuffers==25.2.10
 fonttools==4.59.1
 frozenlist==1.7.0
