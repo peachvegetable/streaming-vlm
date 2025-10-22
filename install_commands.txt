@@ -1,0 +1,8 @@
+On AMD system only:
+pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/rocm6.3
+
+pip install transformers==4.52.4 accelerate deepspeed peft opencv-python decord datasets tensorboard gradio pillow-heif gpustat timm sentencepiece openai av==12.0.0 liger_kernel numpy==1.24.4 yt-dlp tqdm huggingface_hub ffmpeg wandb
+pip install qwen_vl_utils==0.0.11 
+pip install -e streaming_vlm/livecc_utils/
+
+pip install -U "numpy<2.3,>=2.2" "av>=16.0.0" opencv-python==4.12.0.88
