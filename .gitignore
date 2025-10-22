@@ -1,3 +1,8 @@
+videos_captioning/
+videos_captioning
+videos_vqa/
+videos_vqa
+
 data/
 wandb/
 output/
