@@ -115,7 +115,14 @@ def streaming_text_eager_attn_forward(
 
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, position_ids, cache_kwargs)
+            if cache_kwargs is None:
+                cache_kwargs = {}
+            # carry position_ids via kwargs expected by the cache implementation
+            cache_kwargs["position_ids"] = position_ids
+
+            key_states, value_states = past_key_value.update(
+                key_states, value_states, self.layer_idx, cache_kwargs=cache_kwargs
+            )
         
         if streaming_args.pos_mode == "shrink":
             # In shrink mode, pass in position embedding corresponding to entire input_ids, need to add after update kv cache
