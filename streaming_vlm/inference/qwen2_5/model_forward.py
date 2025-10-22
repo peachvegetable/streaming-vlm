@@ -1,4 +1,5 @@
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLModelOutputWithPast,Qwen2_5_VLCausalLMOutputWithPast
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from typing import Optional, List, Tuple, Union
 import torch
 from streaming_vlm.inference.streaming_args import StreamingArgs

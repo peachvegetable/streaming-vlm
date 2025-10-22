@@ -4,7 +4,21 @@ import torch
 from typing import Optional, Tuple, List, Union
 from torch.nn import functional as F
 from types import MethodType
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import logger,rotate_half,Cache,BaseModelOutputWithPast,repeat_kv,_flash_attention_forward, StaticCache, SlidingWindowCache, AttentionMaskConverter, make_flex_block_causal_mask, BlockMask
+# from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import logger,rotate_half,Cache,BaseModelOutputWithPast,repeat_kv,_flash_attention_forward, StaticCache, SlidingWindowCache, AttentionMaskConverter, make_flex_block_causal_mask, BlockMask
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    logger,
+    rotate_half,
+    Cache,
+    BaseModelOutputWithPast,
+    repeat_kv,
+    _flash_attention_forward,
+    StaticCache,
+    SlidingWindowCache,
+    AttentionMaskConverter,
+)
+from torch.nn.attention.flex_attention import BlockMask
+from transformers.integrations.flex_attention import make_flex_block_causal_mask
+
 from streaming_vlm.inference.generate.streaming_cache import StreamingCache
 from streaming_vlm.inference.streaming_args import StreamingArgs
 import math
@@ -101,7 +115,14 @@ def streaming_text_eager_attn_forward(
 
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, position_ids, cache_kwargs)
+            if cache_kwargs is None:
+                cache_kwargs = {}
+            # carry position_ids via kwargs expected by the cache implementation
+            cache_kwargs["position_ids"] = position_ids
+
+            key_states, value_states = past_key_value.update(
+                key_states, value_states, self.layer_idx, cache_kwargs=cache_kwargs
+            )
         
         if streaming_args.pos_mode == "shrink":
             # In shrink mode, pass in position embedding corresponding to entire input_ids, need to add after update kv cache
