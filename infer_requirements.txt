@@ -27,10 +27,7 @@ fastapi==0.116.1
 faster-whisper==1.1.1
 ffmpeg-python==0.2.0
 filelock==3.18.0
-<<<<<<< HEAD
 # flash_attn==2.8.0.post2
-=======
->>>>>>> a7dfba59c09ffc5f1a6e9bc82157a7bf817b442f
 flatbuffers==25.2.10
 fonttools==4.59.1
 frozenlist==1.7.0
