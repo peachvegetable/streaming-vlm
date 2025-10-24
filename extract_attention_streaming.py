@@ -808,6 +808,96 @@ def extract_attention_streaming(
         frame_attentions_tv.append(attn_tv_np)
         frame_attentions_vt.append(attn_vt_np)
 
+    # Text→Vision Per-Head Extraction (No Averaging)
+    print(f"\nExtracting Text→Vision per-head (no averaging)")
+    num_heads_tv = attn_probs.shape[1]
+    actual_num_frames_tv = min(mapper.num_frames, max_frames) if max_frames else mapper.num_frames
+
+    # Directories for per-head TV outputs
+    per_head_tv_dir = output_dir / "per_head_tv"
+    per_head_tv_dir.mkdir(parents=True, exist_ok=True)
+    tv_heat_dir = output_dir / "per_head_tv_heatmaps"
+    tv_heat_dir.mkdir(parents=True, exist_ok=True)
+    tv_token_dir = output_dir / "per_head_tv_top_tokens"
+    tv_token_dir.mkdir(parents=True, exist_ok=True)
+
+    # Token pieces aligned to text_idx order
+    text_token_pieces = [processor.tokenizer.decode([int(t)]) for t in inputs.input_ids[0][text_idx]]
+
+    tv_scores = []  # Collect summary scores per head/frame
+
+    for frame_idx in range(actual_num_frames_tv):
+        frame_vision_idx = mapper.get_frame_indices(frame_idx)
+        for head_idx in range(num_heads_tv):
+            A = attn_probs[0, head_idx, :, :]  # [Q, K]
+            # Slice Text→Vision (rows=text tokens, cols=vision of this frame)
+            attn_tv_head = torch.index_select(A, 0, text_idx)
+            attn_tv_head = torch.index_select(attn_tv_head, 1, frame_vision_idx)  # [T_text, V_merged]
+
+            # Save raw per-head TV matrix (merged grid)
+            tv_np = attn_tv_head.detach().float().cpu().numpy()
+            np.save(per_head_tv_dir / f"frame_{frame_idx:03d}_head{head_idx:02d}_tv.npy", tv_np)
+
+            # Scores
+            overall_score = float(tv_np.mean())
+            any_high_score = float(tv_np.max())
+            tv_scores.append({
+                "frame_idx": frame_idx,
+                "head_idx": head_idx,
+                "overall_score": overall_score,
+                "any_high_score": any_high_score,
+            })
+
+            # Top tokens by contribution (sum over vision patches)
+            token_weights = tv_np.sum(axis=1)  # [T_text]
+            order = np.argsort(token_weights)[::-1]
+            k = min(len(order), 10)
+            top_list = []
+            for r in order[:k]:
+                top_list.append({
+                    "abs_index": int(text_idx[r]),
+                    "piece": text_token_pieces[r],
+                    "weight": float(token_weights[r])
+                })
+            with open(tv_token_dir / f"frame_{frame_idx:03d}_head{head_idx:02d}_top_tokens.json", "w") as f:
+                json.dump({
+                    "frame_idx": frame_idx,
+                    "head_idx": head_idx,
+                    "top_tokens": top_list
+                }, f, indent=2)
+
+            # Heatmap: average across text tokens to spatial map, upsample to pre-merger grid
+            v_mean = attn_tv_head.mean(dim=0)  # [V_merged]
+            nv_merged = mapper.patches_per_frame
+            if nv_merged != pre_patches:
+                ratio = pre_patches // nv_merged
+                merger_side = int(round(math.sqrt(ratio)))
+                post_h, post_w = mapper.spatial_grid
+                v_hw = v_mean.view(post_h, post_w)
+                v_hw = torch.repeat_interleave(v_hw, repeats=merger_side, dim=0)
+                v_hw = torch.repeat_interleave(v_hw, repeats=merger_side, dim=1)
+                v_pre = v_hw.view(pre_patches)
+            else:
+                v_pre = v_mean
+
+            # Build a minimal [T, V_pre] for the plotting util (T=1)
+            tv_for_plot = v_pre.unsqueeze(0).detach().float().cpu().numpy()
+            viz = AttentionVisualizer(str(tv_heat_dir))
+            viz.plot_frame_to_text_attention(
+                attention=tv_for_plot,
+                frame_idx=frame_idx,
+                spatial_grid=(pre_h, pre_w),
+                text_tokens=["<mean>"]
+            )
+
+    # Save per-head TV summary CSV
+    import csv
+    with open(output_dir / "per_head_tv_scores.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["frame_idx", "head_idx", "overall_score", "any_high_score"])
+        writer.writeheader()
+        for row in tv_scores:
+            writer.writerow(row)
+
     # Vision→Text Per-Head Extraction (No Averaging)
     frame_attentions_vt_per_head = []
     if vision_to_text:
