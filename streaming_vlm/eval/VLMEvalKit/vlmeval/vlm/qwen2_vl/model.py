@@ -17,6 +17,7 @@ from ...dataset import DATASET_MODALITY
 VLLM_MAX_IMAGE_INPUT_NUM = 24
 #########################################################
 from transformers import AutoTokenizer, AutoModelForCausalLM, LogitsProcessor, LogitsProcessorList
+import os
 class AllowedTokensLogitsProcessor(LogitsProcessor):
     def __init__(self, allowed_token_ids, eos_token_ids=None):
         super().__init__()
@@ -50,6 +51,20 @@ def build_allowed_ids_qwen(tokenizer, allowed_chars=("A","B","C","D","E","F","Ye
         raise RuntimeError("该 tokenizer 里未找到 A/B/C/D 的（含空格/▁）token；请改白名单或直接给定 token id。")
     print(f'allowed_ids: {ids}')
     return ids
+def build_choice_groups_qwen(tokenizer, letters=("A","B","C","D")):
+    groups = {}
+    for c in letters:
+        variants = set()
+        variants.add(c)
+        variants.add(" " + c)
+        variants.add("▁" + c)
+        ids = []
+        for tid in range(tokenizer.vocab_size):
+            piece = tokenizer.decode([tid], skip_special_tokens=True)
+            if piece in variants:
+                ids.append(tid)
+        groups[c] = ids
+    return groups
 #########################################################
 
 def ensure_image_url(image: str) -> str:
@@ -510,12 +525,52 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         allowed_ids = build_allowed_ids_qwen(self.processor.tokenizer)
         lp = LogitsProcessorList([AllowedTokensLogitsProcessor(allowed_ids, eos_token_ids=self.processor.tokenizer.eos_token_id)])
         #########################################################
-        generated_ids = self.model.generate(
+        _want_probs = os.environ.get('QWEN_DUMP_CHOICE_PROBS', '') == '1'
+        _neutral = os.environ.get('QWEN_PROB_NEUTRAL', '0') == '1'
+
+        # Optional analysis pass to get pre-warpers, full-softmax-like probabilities without allowed-token mask
+        if _want_probs and _neutral:
+            try:
+                neutral_kwargs = dict(
+                    max_new_tokens=1,
+                    top_k=0,
+                    top_p=1.0,
+                    temperature=1.0,
+                )
+                analysis_out = self.model.generate(
+                    **inputs,
+                    **neutral_kwargs,
+                    output_scores=True,
+                    return_dict_in_generate=True,
+                    # no logits_processor (no allowed-token mask), and avoid KV cache to reduce VRAM
+                    use_cache=False,
+                )
+                scores = analysis_out.scores[0]
+                probs = torch.softmax(scores, dim=-1)
+                groups = build_choice_groups_qwen(self.processor.tokenizer)
+                report = []
+                for k in ["A","B","C","D"]:
+                    ids = groups.get(k, [])
+                    if len(ids):
+                        idx = torch.tensor(ids, device=probs.device, dtype=torch.long)
+                        p = probs[0, idx].sum().item()
+                    else:
+                        p = 0.0
+                    report.append(f"{k}:{p*100:.2f}%")
+                print('choice_probs ' + ' '.join(report))
+                del analysis_out
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        # Main generation (unchanged behavior): use allowed-token mask + user generation settings
+        out = self.model.generate(
             **inputs,
             **self.generate_kwargs,
             logits_processor=lp,
             min_new_tokens=1,
         )
+        generated_ids = out
         generated_ids = [
             output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, generated_ids)
         ]

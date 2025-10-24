@@ -198,6 +198,12 @@ You can launch the evaluation by setting either --data and --model or --config.
     # Optional FPS override for video models/datasets
     parser.add_argument('--fps', type=float, default=None,
                         help='Override video sampling FPS for the model/dataset. If unset, uses defaults.')
+    # Optional input ordering for multimodal content
+    parser.add_argument('--input-order', type=str, default='video-first', choices=['video-first', 'text-first', 'text-video-text'],
+                        help='Order of multimodal inputs inside the user message: video-first (default) or text-first.')
+    # Optional: print choice probabilities A/B/C/D from raw vocab distribution (debug/analysis)
+    parser.add_argument('--print-choice-probs', action='store_true',
+                        help='If set, print raw softmax probabilities for A/B/C/D at the next-token position.')
 
     # Single-sample selection (for fast iteration on one video)
     # Only one of the following should be provided. If multiple are set, the priority is: index > id > path.
@@ -232,6 +238,12 @@ def main():
 
     if 'MMEVAL_ROOT' in os.environ:
         args.work_dir = os.environ['MMEVAL_ROOT']
+
+    if args.print_choice_probs:
+        os.environ['QWEN_DUMP_CHOICE_PROBS'] = '1'
+        # Use a neutral analysis pass (disable top-k/top-p/temperature and masking) for probability viewing,
+        # to avoid degenerate 100% after warpers.
+        os.environ['QWEN_PROB_NEUTRAL'] = '1'
 
     if not use_config:
         for k, v in supported_VLM.items():
@@ -323,6 +335,27 @@ def main():
                             logger.warning('Dataset has no fps attribute; FPS override ignored.')
                     except Exception as e:
                         logger.exception(f'Failed to apply FPS override: {e}')
+
+                # Optional: reorder multimodal content (text-first vs video-first) by wrapping dataset.build_prompt
+                if args.input_order in ['text-first', 'text-video-text'] and hasattr(dataset, 'build_prompt'):
+                    try:
+                        _orig_build_prompt = dataset.build_prompt
+
+                        def _build_prompt_reordered(line, video_llm=False):
+                            struct = _orig_build_prompt(line, video_llm)
+                            text_items = [x for x in struct if isinstance(x, dict) and x.get('type') == 'text']
+                            other_items = [x for x in struct if not (isinstance(x, dict) and x.get('type') == 'text')]
+                            if args.input_order == 'text-first':
+                                return text_items + other_items
+                            elif args.input_order == 'text-video-text':
+                                return text_items + other_items + text_items
+                            else:
+                                return struct
+
+                        dataset.build_prompt = _build_prompt_reordered
+                        logger.info(f'Input order override active; using {args.input_order} ordering for multimodal content')
+                    except Exception as e:
+                        logger.exception(f'Failed to wrap dataset.build_prompt for input ordering: {e}')
 
                 # Optional: narrow to a single sample for fast iteration
                 # Works for Video-MME_* datasets (and any dataset exposing a pandas DataFrame with an 'index' column).
