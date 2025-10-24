@@ -195,6 +195,9 @@ You can launch the evaluation by setting either --data and --model or --config.
     parser.add_argument(
         '--use-vllm', action='store_true', help='use vllm to generate, the flag is only supported in Llama4 for now')
     parser.add_argument('--use-verifier', action='store_true', help='use verifier to evaluate')
+    # Optional FPS override for video models/datasets
+    parser.add_argument('--fps', type=float, default=None,
+                        help='Override video sampling FPS for the model/dataset. If unset, uses defaults.')
 
     # Single-sample selection (for fast iteration on one video)
     # Only one of the following should be provided. If multiple are set, the priority is: index > id > path.
@@ -306,6 +309,20 @@ def main():
                     if dataset is None:
                         logger.error(f'Dataset {dataset_name} is not valid, will be skipped. ')
                         continue
+
+                # Optional: override FPS if requested
+                if args.fps is not None:
+                    try:
+                        # Ensure nframe is not conflicting when FPS is set
+                        if hasattr(dataset, 'nframe'):
+                            dataset.nframe = 0
+                        if hasattr(dataset, 'fps'):
+                            dataset.fps = float(args.fps)
+                            logger.info(f'FPS override active; dataset.fps set to {dataset.fps}')
+                        else:
+                            logger.warning('Dataset has no fps attribute; FPS override ignored.')
+                    except Exception as e:
+                        logger.exception(f'Failed to apply FPS override: {e}')
 
                 # Optional: narrow to a single sample for fast iteration
                 # Works for Video-MME_* datasets (and any dataset exposing a pandas DataFrame with an 'index' column).
