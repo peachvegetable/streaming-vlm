@@ -59,6 +59,7 @@ import argparse
 import json
 import math
 from typing import Dict, List, Tuple, Optional
+from typing import Union
 
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2VLForConditionalGeneration, AutoProcessor
 from streaming_vlm.inference.qwen2_5.patch_model import convert_qwen2_5_to_streaming
@@ -530,6 +531,7 @@ def extract_attention_streaming(
     save_top_k_analysis: bool = False,
     top_k: int = 5,
     normalize_rows: bool = True,
+    fps: float = 1.0,
     streaming_args: Optional[StreamingArgs] = None
 ) -> Dict:
     """Extract attention maps from StreamingVLM inference."""
@@ -564,7 +566,7 @@ def extract_attention_streaming(
         {
             "role": "user",
             "content": [
-                {"type": "video", "video": video_path, "fps": 1.0, "max_pixels": 40000},
+                {"type": "video", "video": video_path, "fps": fps, "max_pixels": 40000},
                 {"type": "text", "text": question},
             ],
         }
@@ -576,6 +578,98 @@ def extract_attention_streaming(
         image_inputs, video_inputs = process_vision_info(messages)
     else:
         raise ImportError("qwen_vl_utils is required")
+
+    # Save the sampled frames exactly as constructed for the processor
+    def _frame_to_hwc_uint8(frame: Union[torch.Tensor, np.ndarray]) -> np.ndarray:
+        """Convert a single frame to HWC uint8 safely, handling 0-1 vs 0-255 floats.
+
+        - Accepts CHW or HWC
+        - If float and max>2.0, assume 0-255; else assume 0-1
+        - If integer but not uint8, clip to [0,255] and cast
+        """
+        if isinstance(frame, torch.Tensor):
+            frame = frame.detach().cpu().numpy()
+        # Accept shapes: HWC or CHW
+        if frame.ndim == 3 and frame.shape[0] in (1, 3) and frame.shape[2] not in (1, 3):
+            # Likely CHW -> convert to HWC
+            frame = np.transpose(frame, (1, 2, 0))
+        # Handle dtype/range
+        if np.issubdtype(frame.dtype, np.floating):
+            fmin = float(np.nanmin(frame)) if frame.size else 0.0
+            fmax = float(np.nanmax(frame)) if frame.size else 0.0
+            if fmax > 2.0:
+                arr = np.clip(frame, 0.0, 255.0).astype(np.uint8)
+            else:
+                arr = np.clip(frame, 0.0, 1.0)
+                arr = (arr * 255.0).round().astype(np.uint8)
+        elif frame.dtype == np.uint8:
+            arr = frame
+        else:
+            # Other integer types
+            arr = np.clip(frame, 0, 255).astype(np.uint8)
+        return arr
+
+    sampled_dir = output_dir / "sampled_frames"
+    sampled_dir.mkdir(parents=True, exist_ok=True)
+    sampled_count = 0
+    try:
+        if isinstance(video_inputs, (list, tuple)) and len(video_inputs) > 0:
+            vid = video_inputs[0]
+            if isinstance(vid, (list, tuple)):
+                from PIL import Image
+                for i, f in enumerate(vid):
+                    out_path = sampled_dir / f"frame_{i:05d}.jpg"
+                    if hasattr(f, 'save'):
+                        # PIL.Image
+                        if i == 0:
+                            try:
+                                npf = np.array(f)
+                                print(f"[sampled_frames] frame_00000 stats: dtype={npf.dtype}, min={npf.min() if npf.size else 'n/a'}, max={npf.max() if npf.size else 'n/a'}")
+                            except Exception:
+                                pass
+                        f.save(out_path)
+                    else:
+                        # Tensor/ndarray
+                        if isinstance(f, torch.Tensor):
+                            npf = f.detach().cpu().numpy()
+                        else:
+                            npf = np.array(f)
+                        if i == 0:
+                            try:
+                                print(f"[sampled_frames] frame_00000 stats: dtype={npf.dtype}, min={np.min(npf) if npf.size else 'n/a'}, max={np.max(npf) if npf.size else 'n/a'}")
+                            except Exception:
+                                pass
+                        arr = _frame_to_hwc_uint8(f)
+                        Image.fromarray(arr).save(out_path)
+                    sampled_count += 1
+            elif isinstance(vid, (torch.Tensor, np.ndarray)):
+                from PIL import Image
+                tdim = vid.shape[0]
+                for i in range(tdim):
+                    out_path = sampled_dir / f"frame_{i:05d}.jpg"
+                    fr = vid[i]
+                    if isinstance(fr, torch.Tensor):
+                        npf = fr.detach().cpu().numpy()
+                    else:
+                        npf = np.array(fr)
+                    if i == 0:
+                        try:
+                            print(f"[sampled_frames] frame_00000 stats: dtype={npf.dtype}, min={np.min(npf) if npf.size else 'n/a'}, max={np.max(npf) if npf.size else 'n/a'}")
+                        except Exception:
+                            pass
+                    arr = _frame_to_hwc_uint8(fr)
+                    Image.fromarray(arr).save(out_path)
+                sampled_count = tdim
+        # Save metadata about sampling
+        (output_dir / "sampled_frames_metadata.json").write_text(
+            json.dumps({
+                "video_path": str(video_path),
+                "fps": fps,
+                "num_sampled_frames": sampled_count
+            }, indent=2)
+        )
+    except Exception as e:
+        print(f"Warning: failed to export sampled frames: {type(e).__name__}: {e}")
 
     inputs = processor(
         text=[text],
@@ -927,6 +1021,7 @@ def main():
     parser.add_argument("--video_path", type=str, required=True, help="Path to video file")
     parser.add_argument("--question", type=str, required=True, help="Question about the video")
     parser.add_argument("--output_dir", type=str, default="outputs/attn", help="Output directory")
+    parser.add_argument("--fps", type=float, default=1.0, help="Sampling FPS for preprocessing the video")
     parser.add_argument("--model_path", type=str, default="mit-han-lab/StreamingVLM", help="Model path")
     parser.add_argument("--model_base", type=str, choices=["Qwen2_5", "Qwen2"], default="Qwen2_5", help="Base model type")
     parser.add_argument("--pos_mode", type=str, default="shrink", choices=["append", "shrink"], help="Position mode")
@@ -958,6 +1053,7 @@ def main():
         video_path=args.video_path,
         question=args.question,
         output_dir=args.output_dir,
+        fps=args.fps,
         device=args.device,
         capture_decode=args.capture_decode,
         max_decode_steps=args.max_decode_steps,
