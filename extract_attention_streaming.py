@@ -751,6 +751,17 @@ def extract_attention_streaming(
     print(f"Question tokens: {len(text_idx)}{filter_msg}")
     print(f"Text range: [{text_idx[0].item()}, {text_idx[-1].item()}]")
 
+    # Verbose: print each text token with its absolute index and decoded piece
+    try:
+        print("\nText tokens (absolute_index -> piece):")
+        ids_row = inputs.input_ids[0]
+        for j in text_idx.tolist():
+            tok_id = int(ids_row[j])
+            piece = processor.tokenizer.decode([tok_id])
+            print(f"{j}: {piece!r}")
+    except Exception as e:
+        print(f"Warning: failed to print text tokens: {type(e).__name__}: {e}")
+
     # Extract per-frame attention
     frame_attentions_tv = []
     frame_attentions_vt = []
